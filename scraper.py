@@ -18,7 +18,6 @@ CATEGORY_URL = "https://www.pricecharting.com/category/pokemon-cards"
 PROCESSED_CARDS_FILE = "scraped_cards.txt"
 CSV_FILENAME = "allcorectpricees.csv"
 
-
 def init_driver():
     options = Options()
     options.add_argument("--headless=new")
@@ -30,12 +29,16 @@ def init_driver():
     service = Service(CHROMEDRIVER_PATH)
     return webdriver.Chrome(service=service, options=options)
 
-
 def fetch_console_urls(driver):
     driver.get(CATEGORY_URL)
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "div.sets"))
-    )
+    try:
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.sets"))
+        )
+    except TimeoutException:
+        print(f"⚠️ Timeout while loading CATEGORY_URL: {CATEGORY_URL}")
+        return []
+
     anchors = driver.find_elements(By.CSS_SELECTOR, "a[href^='/console/']")
     urls = set()
     for a in anchors:
@@ -47,7 +50,6 @@ def fetch_console_urls(driver):
         if href.startswith(BASE_URL + "/console/pokemon"):
             urls.add(href)
     return list(urls)
-
 
 def get_card_links_from_console(driver, console_url):
     driver.get(console_url)
@@ -65,26 +67,38 @@ def get_card_links_from_console(driver, console_url):
         last_height = new_height
     return list(card_links)
 
-
 def clean_price(price_elem):
     if price_elem:
         text = price_elem.text.strip()
         return text if text != "-" else "N/A"
     return "N/A"
 
-
 def fetch_card_data(driver, card_url):
     driver.get(card_url)
     try:
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "h1#product_name"))
         )
     except TimeoutException:
-        print(f"⚠️ Timeout loading: {card_url}")
+        print(f"⚠️ Timeout loading card page: {card_url}")
         return None
 
     name = driver.find_element(By.CSS_SELECTOR, "h1#product_name").text.strip()
     prices = driver.find_elements(By.CSS_SELECTOR, "span.price.js-price")
+
+    def get_optional_text(selector):
+        try:
+            return driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+        except NoSuchElementException:
+            return "N/A"
+
+    def get_image_url():
+        for img in driver.find_elements(By.CSS_SELECTOR, "img"):
+            src = img.get_attribute("src")
+            if src and "1600.jpg" in src:
+                return src
+        return "N/A"
+
     return {
         "Name": name,
         "Raw Price": clean_price(prices[0]) if len(prices) > 0 else "N/A",
@@ -93,27 +107,11 @@ def fetch_card_data(driver, card_url):
         "Grade 9 Price": clean_price(prices[3]) if len(prices) > 3 else "N/A",
         "Grade 9.5 Price": clean_price(prices[4]) if len(prices) > 4 else "N/A",
         "PSA 10 Price": clean_price(prices[5]) if len(prices) > 5 else "N/A",
-        "Rarity": get_optional_text(driver, "td.details[itemprop='description']"),
-        "Model Number": get_optional_text(driver, "td.details[itemprop='model-number']"),
-        "Image URL": get_image_url(driver),
+        "Rarity": get_optional_text("td.details[itemprop='description']"),
+        "Model Number": get_optional_text("td.details[itemprop='model-number']"),
+        "Image URL": get_image_url(),
         "Card URL": card_url
     }
-
-
-def get_optional_text(driver, selector):
-    try:
-        return driver.find_element(By.CSS_SELECTOR, selector).text.strip()
-    except NoSuchElementException:
-        return "N/A"
-
-
-def get_image_url(driver):
-    for img in driver.find_elements(By.CSS_SELECTOR, "img"):
-        src = img.get_attribute("src")
-        if src and "1600.jpg" in src:
-            return src
-    return "N/A"
-
 
 def save_to_csv(data, filename=CSV_FILENAME, write_header=False, mode='a'):
     if not data:
@@ -126,19 +124,16 @@ def save_to_csv(data, filename=CSV_FILENAME, write_header=False, mode='a'):
         writer.writerows(data)
     print(f"✅ Saved to {filename}")
 
-
 def zip_csv_file(csv_filename=CSV_FILENAME, zip_filename="allcorectpricees.zip"):
     with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(csv_filename, arcname=os.path.basename(csv_filename))
     print(f"📦 Zipped to {zip_filename}")
-
 
 def load_processed_cards():
     if not os.path.exists(PROCESSED_CARDS_FILE):
         return set()
     with open(PROCESSED_CARDS_FILE, "r", encoding="utf-8") as f:
         return set(line.strip() for line in f if line.strip())
-
 
 def main():
     driver = init_driver()
@@ -178,7 +173,6 @@ def main():
     finally:
         driver.quit()
         print("👋 Driver closed.")
-
 
 if __name__ == "__main__":
     main()
