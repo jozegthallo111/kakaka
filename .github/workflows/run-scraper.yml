@@ -1,64 +1,32 @@
-name: Run Scraper
+name: Scrape PriceCharting and Upload CSV
 
 on:
-  workflow_dispatch:   # Manual trigger via GitHub UI
-  push:                # Automatically runs on code push
+  workflow_dispatch:
 
 jobs:
-  run-scraper-job:
+  scrape_and_upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # ⏱ Max timeout = 6 hours
 
     steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: 🐍 Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.x'
 
-      - name: 🧩 Install Chrome (v124) and Chromedriver (v124)
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y wget unzip curl gnupg libglib2.0-0 libnss3 libxss1 \
-            libatk-bridge2.0-0 libgtk-3-0 libu2f-udev libvulkan1 libxi6 libxtst6 \
-            fonts-liberation xdg-utils
-          
-          # Install Chrome
-          wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/124.0.6367.91/linux64/chrome-linux64.zip
-          unzip chrome-linux64.zip
-          sudo mv chrome-linux64 /opt/google
-          sudo ln -sf /opt/google/chrome-linux64/chrome /usr/bin/google-chrome
-          
-          # Install Chromedriver
-          wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/124.0.6367.91/linux64/chromedriver-linux64.zip
-          unzip chromedriver-linux64.zip
-          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver
+          pip install selenium
 
-      - name: 📦 Install Python Requirements
+      - name: Run scraper script
         run: |
-          pip install --no-cache-dir -r requirements.txt
+          python your_scraper_script.py
 
-      - name: ⏱ Start Keep-Alive Background Process
-        run: |
-          (while true; do echo "⏳ Still running..."; sleep 300; done) &
-          echo $! > keepalive.pid
-
-      - name: ▶️ Run Scraper
-        run: python scraper.py
-
-      - name: 🛑 Stop Keep-Alive Process
-        if: always()
-        run: |
-          if [ -f keepalive.pid ]; then
-            kill $(cat keepalive.pid) || true
-            rm keepalive.pid
-          fi
-
-      - name: 📤 Upload Scraped CSV
-        uses: actions/upload-artifact@v4
+      - name: Upload CSV artifact if exists
+        if: ${{ always() && (steps.run_scraper_script.outcome == 'success') }}
+        uses: actions/upload-artifact@v3
         with:
           name: scraped-csv
           path: allcorectpricees.csv
