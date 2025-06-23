@@ -17,6 +17,7 @@ BASE_URL = "https://www.pricecharting.com"
 CATEGORY_URL = "https://www.pricecharting.com/category/pokemon-cards"
 PROCESSED_CARDS_FILE = "scraped_cards.txt"
 CSV_FILENAME = "allcorectpricees.csv"
+ZIP_FILENAME = "allcorectpricees.zip"
 
 def init_driver():
     options = Options()
@@ -44,29 +45,38 @@ def fetch_console_urls(driver):
     for a in anchors:
         href = a.get_attribute("href")
         text = a.text.lower()
-        print(f"Found set: {text} | href: {href}")  # Debug print
+        # Skip Japanese/Chinese sets
         if "japanese" in text or "chinese" in text:
-            print(f"⏭️ Skipping: {text}")
+            print(f"⏭️ Skipping set due to language: {text}")
             continue
-        if href.startswith("/console/pokemon"):
-            full_url = BASE_URL + href
-            urls.add(full_url)
+        if href.startswith(BASE_URL + "/console/pokemon"):
+            urls.add(href)
     return list(urls)
 
 def get_card_links_from_console(driver, console_url):
     driver.get(console_url)
-    time.sleep(2)
+    time.sleep(2)  # let page load
+
     card_links = set()
     last_height = driver.execute_script("return document.body.scrollHeight")
     while True:
+        # Scroll down to bottom
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        cards = driver.find_elements(By.CSS_SELECTOR, "a[href^='/game/']")
-        card_links.update(BASE_URL + card.get_attribute("href") for card in cards)
+        time.sleep(2)  # wait for lazy loading
+
+        # Collect card links on the page
+        cards = driver.find_elements(By.CSS_SELECTOR, "a[href^='/game/pokemon-promo/'], a[href^='/game/pokemon-']")
+        # Added both promo and normal cards selector to catch cards under different URLs
+        for card in cards:
+            href = card.get_attribute("href")
+            if href and href.startswith(BASE_URL + "/game/"):
+                card_links.add(href)
+
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
         last_height = new_height
+
     return list(card_links)
 
 def clean_price(price_elem):
@@ -85,7 +95,11 @@ def fetch_card_data(driver, card_url):
         print(f"⚠️ Timeout loading card page: {card_url}")
         return None
 
-    name = driver.find_element(By.CSS_SELECTOR, "h1#product_name").text.strip()
+    try:
+        name = driver.find_element(By.CSS_SELECTOR, "h1#product_name").text.strip()
+    except NoSuchElementException:
+        name = "N/A"
+
     prices = driver.find_elements(By.CSS_SELECTOR, "span.price.js-price")
 
     def get_optional_text(selector):
@@ -124,12 +138,15 @@ def save_to_csv(data, filename=CSV_FILENAME, write_header=False, mode='a'):
         if write_header:
             writer.writeheader()
         writer.writerows(data)
-    print(f"✅ Saved to {filename}")
+    print(f"✅ Saved {len(data)} records to {filename}")
 
-def zip_csv_file(csv_filename=CSV_FILENAME, zip_filename="allcorectpricees.zip"):
-    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        zipf.write(csv_filename, arcname=os.path.basename(csv_filename))
-    print(f"📦 Zipped to {zip_filename}")
+def zip_csv_file(csv_filename=CSV_FILENAME, zip_filename=ZIP_FILENAME):
+    if os.path.exists(csv_filename):
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(csv_filename, arcname=os.path.basename(csv_filename))
+        print(f"📦 Zipped {csv_filename} to {zip_filename}")
+    else:
+        print(f"⚠️ Cannot zip, {csv_filename} not found.")
 
 def load_processed_cards():
     if not os.path.exists(PROCESSED_CARDS_FILE):
@@ -141,36 +158,60 @@ def main():
     driver = init_driver()
     try:
         console_urls = fetch_console_urls(driver)
+        if not console_urls:
+            print("⚠️ No console URLs found to process.")
+            return
+
         processed_cards = load_processed_cards()
         all_cards_data = []
-        first_save = True
+        first_save = not os.path.exists(CSV_FILENAME)
         processed_count = 0
 
         for console_url in console_urls:
             print(f"🕹️ Processing set: {console_url}")
             card_links = get_card_links_from_console(driver, console_url)
+            if not card_links:
+                print(f"⚠️ No cards found in set: {console_url}")
+                continue
 
             for i, card_url in enumerate(card_links, 1):
                 if card_url in processed_cards:
+                    # Already processed this card
                     continue
-                print(f"🔎 Scraping {i}/{len(card_links)}: {card_url}")
+
+                print(f"🔎 Scraping card {i}/{len(card_links)}: {card_url}")
                 card_data = fetch_card_data(driver, card_url)
                 if card_data:
                     all_cards_data.append(card_data)
+
+                    # Save processed URL
                     with open(PROCESSED_CARDS_FILE, "a", encoding="utf-8") as f:
                         f.write(card_url + "\n")
                     processed_cards.add(card_url)
                     processed_count += 1
-                if processed_count % 10 == 0:
+
+                # Save every 10 cards scraped
+                if processed_count % 10 == 0 and all_cards_data:
                     save_to_csv(all_cards_data, write_header=first_save)
                     all_cards_data = []
                     first_save = False
+
+                # Zip every 500 cards
                 if processed_count > 0 and processed_count % 500 == 0:
                     zip_csv_file()
-                time.sleep(1)
 
+                time.sleep(1)  # be polite, avoid hammering server
+
+        # Save any remaining data
         if all_cards_data:
             save_to_csv(all_cards_data, write_header=first_save)
+
+        # Final zip after scraping
+        zip_csv_file()
+
+        # Debug info
+        print(f"CSV file exists after scraping? {os.path.exists(CSV_FILENAME)}")
+        print(f"CSV absolute path: {os.path.abspath(CSV_FILENAME)}")
 
     finally:
         driver.quit()
