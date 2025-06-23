@@ -44,11 +44,13 @@ def fetch_console_urls(driver):
     for a in anchors:
         href = a.get_attribute("href")
         text = a.text.lower()
+        print(f"Found set: {text} | href: {href}")  # Debug print
         if "japanese" in text or "chinese" in text:
             print(f"⏭️ Skipping: {text}")
             continue
-        if href.startswith(BASE_URL + "/console/pokemon"):
-            urls.add(href)
+        if href.startswith("/console/pokemon"):
+            full_url = BASE_URL + href
+            urls.add(full_url)
     return list(urls)
 
 def get_card_links_from_console(driver, console_url):
@@ -60,7 +62,7 @@ def get_card_links_from_console(driver, console_url):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
         cards = driver.find_elements(By.CSS_SELECTOR, "a[href^='/game/']")
-        card_links.update(card.get_attribute("href") for card in cards)
+        card_links.update(BASE_URL + card.get_attribute("href") for card in cards)
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
