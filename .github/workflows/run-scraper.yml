@@ -1,12 +1,13 @@
 name: Run Scraper
 
 on:
-  workflow_dispatch:   # Allows manual triggering from the GitHub UI
+  workflow_dispatch:   # Manual trigger via GitHub UI
   push:                # Automatically runs on code push
 
 jobs:
   run-scraper-job:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # ⏱ Max timeout = 6 hours
 
     steps:
       - name: 📥 Checkout Repository
@@ -20,13 +21,17 @@ jobs:
       - name: 🧩 Install Chrome (v124) and Chromedriver (v124)
         run: |
           sudo apt update
-          sudo apt install -y wget unzip curl gnupg libglib2.0-0 libnss3 libxss1 libatk-bridge2.0-0 libgtk-3-0 libu2f-udev libvulkan1 libxi6 libxtst6 fonts-liberation xdg-utils
-          # Install Chrome v124
+          sudo apt install -y wget unzip curl gnupg libglib2.0-0 libnss3 libxss1 \
+            libatk-bridge2.0-0 libgtk-3-0 libu2f-udev libvulkan1 libxi6 libxtst6 \
+            fonts-liberation xdg-utils
+          
+          # Install Chrome
           wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/124.0.6367.91/linux64/chrome-linux64.zip
           unzip chrome-linux64.zip
           sudo mv chrome-linux64 /opt/google
           sudo ln -sf /opt/google/chrome-linux64/chrome /usr/bin/google-chrome
-          # Install Chromedriver v124
+          
+          # Install Chromedriver
           wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/124.0.6367.91/linux64/chromedriver-linux64.zip
           unzip chromedriver-linux64.zip
           sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
@@ -34,10 +39,23 @@ jobs:
 
       - name: 📦 Install Python Requirements
         run: |
-          pip install -r requirements.txt
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: ⏱ Start Keep-Alive Background Process
+        run: |
+          (while true; do echo "⏳ Still running..."; sleep 300; done) &
+          echo $! > keepalive.pid
 
       - name: ▶️ Run Scraper
         run: python scraper.py
+
+      - name: 🛑 Stop Keep-Alive Process
+        if: always()
+        run: |
+          if [ -f keepalive.pid ]; then
+            kill $(cat keepalive.pid) || true
+            rm keepalive.pid
+          fi
 
       - name: 📤 Upload Scraped CSV
         uses: actions/upload-artifact@v4
